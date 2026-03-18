@@ -113,6 +113,36 @@ export class FeishuBot {
   }
 
   /**
+   * Send an interactive card message to a chat.
+   * Card JSON string should be pre-built by card-builder.ts
+   */
+  async sendCard(chatId: string, cardJson: string): Promise<void> {
+    try {
+      await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: cardJson,
+        },
+      });
+    } catch (err) {
+      this.log.error(`Failed to send card: ${err}`);
+      // Fallback to plain text
+      try {
+        const card = JSON.parse(cardJson);
+        const fallbackText = card.elements
+          ?.filter((e: any) => e.tag === 'markdown')
+          .map((e: any) => e.content)
+          .join('\n\n') || 'Card rendering failed';
+        await this.sendText(chatId, fallbackText);
+      } catch {
+        await this.sendText(chatId, '❌ Failed to render card');
+      }
+    }
+  }
+
+  /**
    * Handle incoming messages from Feishu.
    */
   private async handleMessage(data: any): Promise<void> {

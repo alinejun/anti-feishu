@@ -2,6 +2,12 @@ import { CommandRouter } from './router.js';
 import { CDPClient } from '../cdp/client.js';
 import { AutoAcceptManager } from '../cdp/auto-accept.js';
 import { FeishuBot } from '../feishu/bot.js';
+import {
+  buildAgentReplyCard,
+  buildStatusCard,
+  buildHelpCard,
+  buildAutoAcceptCard,
+} from '../feishu/card-builder.js';
 import { splitMessage } from '../utils/helpers.js';
 
 export function registerCommands(
@@ -50,7 +56,7 @@ export function registerCommands(
     }
   });
 
-  // /latest
+  // /latest — get latest reply as a rich card
   router.register('latest', 'Get latest Agent reply', async (ctx) => {
     const connected = await cdp.isConnected();
     if (!connected) {
@@ -59,9 +65,17 @@ export function registerCommands(
     }
 
     const reply = await cdp.getLatestReply();
-    const chunks = splitMessage(reply);
-    for (const chunk of chunks) {
-      await bot.sendText(ctx.chatId, chunk);
+
+    // Send as interactive card for rich rendering
+    try {
+      const cardJson = buildAgentReplyCard(reply);
+      await bot.sendCard(ctx.chatId, cardJson);
+    } catch {
+      // Fallback to plain text
+      const chunks = splitMessage(reply);
+      for (const chunk of chunks) {
+        await bot.sendText(ctx.chatId, chunk);
+      }
     }
   });
 
@@ -96,29 +110,24 @@ export function registerCommands(
     }
   });
 
-  // /status
+  // /status — rich card display
   router.register('status', 'Check IDE connection status', async (ctx) => {
     const connected = await cdp.isConnected();
-    const autoAcceptStatus = autoAccept.enabled ? 'ON' : 'OFF';
-
-    const lines = [
-      `📡 IDE: ${connected ? '🟢 Connected' : '🔴 Disconnected'}`,
-      `⚡ Auto Accept: ${autoAcceptStatus}`,
-    ];
+    let windowTitle: string | undefined;
 
     if (connected) {
       try {
-        const title = await cdp.evaluate('document.title') as string;
-        lines.push(`📝 Window: ${title}`);
+        windowTitle = await cdp.evaluate('document.title') as string;
       } catch {
         // ignore
       }
     }
 
-    await bot.sendText(ctx.chatId, lines.join('\n'));
+    const cardJson = buildStatusCard(connected, autoAccept.enabled, windowTitle);
+    await bot.sendCard(ctx.chatId, cardJson);
   });
 
-  // /auto [on|off|status]
+  // /auto [on|off|status] — rich card display
   router.register('auto', 'Toggle Auto Accept (on/off/status)', async (ctx) => {
     const subCmd = (ctx.args[0] || 'status').toLowerCase();
 
@@ -128,33 +137,35 @@ export function registerCommands(
         if (!success) {
           await bot.sendText(ctx.chatId, '❌ Failed to enable Auto Accept. Check IDE connection.');
         }
-        // onEvent callback will send the success message
         break;
       }
       case 'off': {
         await autoAccept.disable();
-        // onEvent callback will send the message
         break;
       }
       case 'status':
       default: {
-        const stats = await autoAccept.getStats();
-        await bot.sendText(ctx.chatId, stats);
+        let clickCount = 0;
+        let diagLog: Array<{ action: string; time: number; matched?: string; cmd?: string; count?: number }> = [];
+
+        try {
+          clickCount = await cdp.evaluate('window.__AA_CLICK_COUNT || 0') as number;
+          diagLog = await cdp.evaluate('(window.__AA_DIAG || []).slice(-10)') as typeof diagLog;
+        } catch {
+          // ignore
+        }
+
+        const cardJson = buildAutoAcceptCard(autoAccept.enabled, clickCount, diagLog);
+        await bot.sendCard(ctx.chatId, cardJson);
         break;
       }
     }
   });
 
-  // /help
+  // /help — rich card display
   router.register('help', 'Show available commands', async (ctx) => {
     const commands = router.getCommandList();
-    const lines = [
-      '📖 Anti-Feishu Commands:',
-      '',
-      ...commands,
-      '',
-      'Or just type without / to send directly to Agent.',
-    ];
-    await bot.sendText(ctx.chatId, lines.join('\n'));
+    const cardJson = buildHelpCard(commands);
+    await bot.sendCard(ctx.chatId, cardJson);
   });
 }

@@ -7,6 +7,7 @@ import { AutoAcceptManager } from './cdp/auto-accept.js';
 import { CommandRouter } from './commands/router.js';
 import { registerCommands } from './commands/handlers.js';
 import { splitMessage } from './utils/helpers.js';
+import { buildAgentReplyCard } from './feishu/card-builder.js';
 
 async function main() {
   // 1. Load config
@@ -55,14 +56,20 @@ async function main() {
     await router.dispatch(text, chatId, userId);
   });
 
-  // 7. Start Agent reply monitor
+  // 7. Start Agent reply monitor — push Agent replies as rich cards
   const monitor = new AgentMonitor(cdp, log, async (reply: string) => {
     const chatId = bot.getLastChatId();
     if (!chatId) return;
 
-    const chunks = splitMessage(reply);
-    for (const chunk of chunks) {
-      await bot.sendText(chatId, `🤖 Agent:\n\n${chunk}`);
+    try {
+      const cardJson = buildAgentReplyCard(reply);
+      await bot.sendCard(chatId, cardJson);
+    } catch {
+      // Fallback to plain text
+      const chunks = splitMessage(reply);
+      for (const chunk of chunks) {
+        await bot.sendText(chatId, `🤖 Agent:\n\n${chunk}`);
+      }
     }
   });
 
