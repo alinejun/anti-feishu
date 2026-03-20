@@ -83,16 +83,24 @@ export class FeishuBot {
   async sendImage(chatId: string, imageBuffer: Buffer): Promise<void> {
     try {
       // Upload image first
+      this.log.info(`Uploading image (${imageBuffer.length} bytes)...`);
       const uploadResp = await this.client.im.image.create({
         data: {
           image_type: 'message',
-          image: new Blob([new Uint8Array(imageBuffer)]) as any,
+          image: imageBuffer,
         },
       });
 
-      const imageKey = (uploadResp as any)?.data?.image_key;
+      this.log.info(`Upload response: ${JSON.stringify(uploadResp)}`);
+
+      // Try multiple paths for image_key
+      const imageKey =
+        (uploadResp as any)?.image_key ||
+        (uploadResp as any)?.data?.image_key ||
+        (uploadResp as any)?.data?.data?.image_key;
+
       if (!imageKey) {
-        this.log.error('Failed to upload image: no image_key returned');
+        this.log.error(`Failed to upload image: no image_key in response`);
         await this.sendText(chatId, '❌ Failed to upload screenshot');
         return;
       }

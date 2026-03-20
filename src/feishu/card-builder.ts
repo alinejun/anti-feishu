@@ -1,7 +1,7 @@
 /**
  * Feishu Message Card Builder
  *
- * Converts Agent replies (markdown-like content) into
+ * Converts Agent replies (HTML from IDE innerHTML) into
  * Feishu Interactive Message Cards for rich display.
  *
  * Card JSON Structure:
@@ -15,6 +15,8 @@
  * }
  */
 
+import { htmlToMarkdown } from '../utils/helpers.js';
+
 export interface CardHeader {
   title: string;
   template?: 'blue' | 'green' | 'red' | 'orange' | 'purple' | 'indigo' | 'turquoise' | 'wathet' | 'grey';
@@ -26,8 +28,11 @@ export interface CardHeader {
 export function buildAgentReplyCard(content: string, header?: CardHeader): string {
   const cardHeader = header || { title: '🤖 Agent Reply', template: 'blue' as const };
 
+  // Convert HTML from IDE to Markdown for Feishu rendering
+  const markdown = htmlToMarkdown(content);
+
   // Split content into segments for better rendering
-  const segments = splitContentSegments(content);
+  const segments = splitContentSegments(markdown);
   const elements: any[] = [];
 
   for (const segment of segments) {

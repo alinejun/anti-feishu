@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anti-Feishu Dashboard</title>
+  <meta name="description" content="Remote IDE monitoring dashboard for Antigravity Agent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2L2 7l10 5 10-5-10-5z" fill="url(#grad1)" opacity="0.9"/>
+          <path d="M2 17l10 5 10-5" stroke="url(#grad1)" stroke-width="2" fill="none"/>
+          <path d="M2 12l10 5 10-5" stroke="url(#grad1)" stroke-width="2" fill="none"/>
+          <defs>
+            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#8b5cf6"/>
+              <stop offset="100%" style="stop-color:#6366f1"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="logo-text">Anti-Feishu</span>
+      </div>
+    </div>
+    <div class="header-center">
+      <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="live">Live View</button>
+        <button class="nav-tab" data-tab="settings">Settings</button>
+      </nav>
+    </div>
+    <div class="header-right">
+      <div id="connection-badge" class="badge badge-disconnected">
+        <span class="badge-dot"></span>
+        <span class="badge-text">Connecting</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main-content">
+    <!-- Left Panel: Video -->
+    <section id="video-section">
+      <div class="panel-header">
+        <h2>IDE Live View</h2>
+        <span id="live-badge" class="live-badge hidden">
+          <span class="live-dot"></span>
+          LIVE
+        </span>
+      </div>
+
+      <div id="video-container">
+        <canvas id="video-canvas"></canvas>
+        <div id="video-placeholder">
+          <div class="placeholder-content">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <path d="M8 21h8M12 17v4"/>
+            </svg>
+            <p>Waiting for IDE connection...</p>
+            <span class="placeholder-hint">IDE must be running with CDP enabled on port 9222</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="video-toolbar">
+        <div class="toolbar-group">
+          <button id="btn-pause" class="toolbar-btn" title="Pause (Space)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16"/>
+              <rect x="14" y="4" width="4" height="16"/>
+            </svg>
+          </button>
+          <button id="btn-screenshot" class="toolbar-btn" title="Screenshot (S)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+          </button>
+          <button id="btn-stop-agent" class="toolbar-btn" title="Stop Agent">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+            </svg>
+          </button>
+        </div>
+        <div class="toolbar-group">
+          <button id="btn-fullscreen" class="toolbar-btn" title="Fullscreen (F)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
+            </svg>
+          </button>
+        </div>
+        <div class="toolbar-group toolbar-info">
+          <label class="quality-label">
+            Quality
+            <select id="quality-select">
+              <option value="30">Low (30%)</option>
+              <option value="60" selected>Medium (60%)</option>
+              <option value="80">High (80%)</option>
+            </select>
+          </label>
+          <span id="fps-counter" class="fps-counter">0 FPS</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Panel -->
+    <section id="right-panel">
+      <!-- Agent Output -->
+      <div id="agent-section">
+        <div class="panel-header">
+          <h2>Agent Activity</h2>
+          <span id="output-count" class="count-badge">0</span>
+        </div>
+        <div id="agent-output"></div>
+        <div id="agent-input-row">
+          <button id="btn-stop-gen" class="btn-stop" title="Stop Generation (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+            </svg>
+          </button>
+          <input
+            type="text"
+            id="agent-input"
+            placeholder="Send to Agent..."
+            autocomplete="off"
+          />
+          <button id="btn-send" class="btn-send" title="Send (Enter)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Status Panel -->
+      <div id="status-section">
+        <div class="panel-header">
+          <h2>System Status</h2>
+        </div>
+        <div id="status-grid">
+          <div class="status-card" id="status-cdp">
+            <div class="status-header">
+              <span class="status-dot"></span>
+              <span class="status-title">CDP</span>
+            </div>
+            <span class="status-value">Disconnected</span>
+            <span class="status-detail">port 9222</span>
+          </div>
+          <div class="status-card" id="status-feishu">
+            <div class="status-header">
+              <span class="status-dot"></span>
+              <span class="status-title">Feishu Bot</span>
+            </div>
+            <span class="status-value">Offline</span>
+            <span class="status-detail">—</span>
+          </div>
+          <div class="status-card" id="status-autoaccept">
+            <div class="status-header">
+              <span class="status-icon">⚡</span>
+              <span class="status-title">Auto Accept</span>
+            </div>
+            <span class="status-value">OFF</span>
+            <span class="status-detail">0 clicks</span>
+          </div>
+          <div class="status-card" id="status-screencast">
+            <div class="status-header">
+              <span class="status-dot"></span>
+              <span class="status-title">Screencast</span>
+            </div>
+            <span class="status-value">Stopped</span>
+            <span class="status-detail">0 frames</span>
+          </div>
+        </div>
+        <div id="uptime-display">Uptime: —</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Mobile FAB -->
+  <button id="fab-screenshot" class="fab" title="Screenshot">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+      <circle cx="12" cy="13" r="4"/>
+    </svg>
+  </button>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

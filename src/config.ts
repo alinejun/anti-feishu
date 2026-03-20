@@ -24,6 +24,10 @@ export interface AppConfig {
   log: {
     level: string;
   };
+  h5: {
+    enabled: boolean;
+    port: number;
+  };
 }
 
 function requiredEnv(key: string): string {
@@ -69,6 +73,10 @@ export function loadConfig(): AppConfig {
     },
     log: {
       level: optionalEnv('LOG_LEVEL', 'info'),
+    },
+    h5: {
+      enabled: optionalEnv('H5_ENABLED', 'true') === 'true',
+      port: parseInt(optionalEnv('H5_PORT', '3000'), 10),
     },
   };
 }

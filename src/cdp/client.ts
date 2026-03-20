@@ -1,11 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
+import type { Page as PageType } from 'puppeteer-core';
 import { Logger } from '../utils/logger.js';
-import {
-  CHAT_INPUT_SELECTORS,
-  SEND_BUTTON_SELECTORS,
-  STOP_BUTTON_SELECTORS,
-  MESSAGE_SELECTORS,
-} from './selectors.js';
 
 export class CDPClient {
   private browser: Browser | null = null;
@@ -18,6 +13,7 @@ export class CDPClient {
   private maxRetries = 10;
   private retryCount = 0;
   private retryDelay = 5000;
+  private lastTargetTitle: string | undefined;
 
   constructor(host: string, port: number, log: Logger) {
     this.host = host;
@@ -25,10 +21,7 @@ export class CDPClient {
     this.log = log;
   }
 
-  /**
-   * Connect to Antigravity IDE's Chromium via CDP.
-   */
-  async connect(): Promise<void> {
+  async connect(targetTitle?: string): Promise<void> {
     const url = `http://${this.host}:${this.port}/json/version`;
     this.log.info(`Connecting to CDP at ${url}...`);
 
@@ -41,29 +34,97 @@ export class CDPClient {
       defaultViewport: null,
     });
 
-    // Find the main IDE window page
     const pages = await this.browser.pages();
     this.page = pages[0];
 
-    // Try to find a better page by title
+    // Log all windows for debugging
+    const titles: string[] = [];
     for (const p of pages) {
       const title = await p.title().catch(() => '');
-      if (title.includes('Antigravity') || title.includes('Visual Studio')) {
-        this.page = p;
-        break;
+      titles.push(title);
+    }
+    this.log.info(`CDP found ${pages.length} windows: ${titles.map((t, i) => `[${i}] ${t}`).join(', ')}`);
+
+    // If targetTitle specified, use it
+    if (targetTitle) {
+      for (let i = 0; i < pages.length; i++) {
+        if (titles[i].toLowerCase().includes(targetTitle.toLowerCase())) {
+          this.page = pages[i];
+          break;
+        }
+      }
+    } else {
+      // Default: prefer AIAgent window, then first real workspace
+      const skipTitles = ['launchpad', 'settings', 'manager'];
+      let fallback: typeof pages[0] | null = null;
+
+      for (let i = 0; i < pages.length; i++) {
+        const lower = titles[i].toLowerCase();
+        if (skipTitles.some(s => lower === s)) continue;
+
+        // Prefer windows with "AIAgent" or "Agent" in title
+        if (lower.includes('aiagent') || lower.startsWith('agent')) {
+          this.page = pages[i];
+          fallback = null;
+          break;
+        }
+
+        // Keep first valid as fallback
+        if (!fallback) fallback = pages[i];
+      }
+
+      if (fallback && this.page === pages[0]) {
+        this.page = fallback;
       }
     }
 
     this.setupDisconnectHandler();
-    this.log.info(`CDP connected. Page title: "${await this.page?.title()}"`);
+    this.log.info(`CDP connected. Active page: "${await this.page?.title()}"`);
   }
 
   /**
-   * Connect with automatic retry on failure.
+   * List all available windows.
    */
+  async listWindows(): Promise<string[]> {
+    if (!this.browser) return [];
+    const pages = await this.browser.pages();
+    const titles: string[] = [];
+    for (const p of pages) {
+      titles.push(await p.title().catch(() => 'N/A'));
+    }
+    return titles;
+  }
+
+  /**
+   * Switch to a specific window by title keyword or index.
+   */
+  async switchPage(target: string): Promise<string> {
+    if (!this.browser) throw new Error('CDP not connected');
+    const pages = await this.browser.pages();
+
+    // Try by index
+    const idx = parseInt(target);
+    if (!isNaN(idx) && idx >= 0 && idx < pages.length) {
+      this.page = pages[idx];
+      return await this.page.title();
+    }
+
+    // Try by title keyword
+    for (const p of pages) {
+      const title = await p.title().catch(() => '');
+      if (title.toLowerCase().includes(target.toLowerCase())) {
+        this.page = p;
+        this.lastTargetTitle = target; // Remember for reconnect
+        return title;
+      }
+    }
+
+    throw new Error(`Window not found: ${target}`);
+  }
+
   async connectWithRetry(): Promise<void> {
     try {
-      await this.connect();
+      await this.connect(this.lastTargetTitle);
       this.retryCount = 0;
     } catch (err) {
       this.retryCount++;
@@ -84,177 +145,113 @@ export class CDPClient {
 
   /**
    * Send a message to the Agent Chat.
+   * Antigravity uses a contenteditable div, not a textarea.
    */
   async sendMessage(text: string): Promise<boolean> {
     if (!this.page) throw new Error('CDP not connected');
 
-    const inputSelectors = JSON.stringify(CHAT_INPUT_SELECTORS);
-    const sendSelectors = JSON.stringify(SEND_BUTTON_SELECTORS);
-
-    return await this.page.evaluate(
-      (msg: string, inputSels: string, sendSels: string) => {
-        const inputSelectors: string[] = JSON.parse(inputSels);
-        const sendSelectors: string[] = JSON.parse(sendSels);
-
-        // Recursive Shadow DOM query
-        function queryShadow(root: Element | Document | ShadowRoot, selector: string): Element | null {
-          const result = root.querySelector(selector);
-          if (result) return result;
-          const allElements = root.querySelectorAll('*');
-          for (const el of allElements) {
-            if (el.shadowRoot) {
-              const found = queryShadow(el.shadowRoot, selector);
-              if (found) return found;
-            }
-          }
-          return null;
-        }
-
-        // Find chat input using fallback selectors
-        let chatInput: Element | null = null;
-        for (const sel of inputSelectors) {
-          chatInput = queryShadow(document, sel);
-          if (chatInput) break;
-        }
-        if (!chatInput) return false;
-
-        // Set textarea value using native setter to trigger React
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement.prototype, 'value',
-        )?.set;
-        if (nativeInputValueSetter) {
-          nativeInputValueSetter.call(chatInput, msg);
-        } else {
-          (chatInput as HTMLTextAreaElement).value = msg;
-        }
-        chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-        chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-        // Try clicking send button
-        for (const sel of sendSelectors) {
-          const sendBtn = queryShadow(document, sel);
-          if (sendBtn) {
-            (sendBtn as HTMLElement).click();
-            return true;
-          }
-        }
-
-        // Fallback: simulate Enter key
-        chatInput.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          bubbles: true,
-        }));
-        return true;
-      },
-      text,
-      inputSelectors,
-      sendSelectors,
-    );
-  }
-
-  /**
-   * Get the latest Agent reply text.
-   */
-  async getLatestReply(): Promise<string> {
-    if (!this.page) throw new Error('CDP not connected');
-
-    const messageSelectors = JSON.stringify(MESSAGE_SELECTORS);
-
-    return await this.page.evaluate((msgSels: string) => {
-      const selectors: string[] = JSON.parse(msgSels);
-
-      function queryShadowAll(root: Element | Document | ShadowRoot, selector: string): Element[] {
-        const results: Element[] = Array.from(root.querySelectorAll(selector));
-        const allElements = root.querySelectorAll('*');
-        for (const el of allElements) {
-          if (el.shadowRoot) {
-            results.push(...queryShadowAll(el.shadowRoot, selector));
-          }
-        }
-        return results;
-      }
-
-      for (const sel of selectors) {
-        const messages = queryShadowAll(document, sel);
-        if (messages.length > 0) {
-          const lastMessage = messages[messages.length - 1];
-          return lastMessage.textContent?.trim() || 'Empty message';
-        }
-      }
-      return 'No messages found';
-    }, messageSelectors);
-  }
-
-  /**
-   * Get the count of messages in the chat.
-   */
-  async getMessageCount(): Promise<number> {
-    if (!this.page) throw new Error('CDP not connected');
-
-    const messageSelectors = JSON.stringify(MESSAGE_SELECTORS);
-
-    return await this.page.evaluate((msgSels: string) => {
-      const selectors: string[] = JSON.parse(msgSels);
-
-      function queryShadowAll(root: Element | Document | ShadowRoot, selector: string): Element[] {
-        const results: Element[] = Array.from(root.querySelectorAll(selector));
-        const allElements = root.querySelectorAll('*');
-        for (const el of allElements) {
-          if (el.shadowRoot) {
-            results.push(...queryShadowAll(el.shadowRoot, selector));
-          }
-        }
-        return results;
-      }
-
-      for (const sel of selectors) {
-        const messages = queryShadowAll(document, sel);
-        if (messages.length > 0) return messages.length;
-      }
-      return 0;
-    }, messageSelectors);
-  }
-
-  /**
-   * Stop the current Agent generation.
-   */
-  async stopGeneration(): Promise<boolean> {
-    if (!this.page) throw new Error('CDP not connected');
-
-    const stopSelectors = JSON.stringify(STOP_BUTTON_SELECTORS);
-
-    return await this.page.evaluate((stopSels: string) => {
-      const selectors: string[] = JSON.parse(stopSels);
-
-      function queryShadow(root: Element | Document | ShadowRoot, selector: string): Element | null {
-        const result = root.querySelector(selector);
-        if (result) return result;
-        const allElements = root.querySelectorAll('*');
-        for (const el of allElements) {
-          if (el.shadowRoot) {
-            const found = queryShadow(el.shadowRoot, selector);
-            if (found) return found;
-          }
-        }
-        return null;
-      }
-
-      for (const sel of selectors) {
-        const stopBtn = queryShadow(document, sel);
-        if (stopBtn) {
-          (stopBtn as HTMLElement).click();
+    // Step 1: Focus the contenteditable input
+    const focused = await this.page.evaluate(`(function() {
+      var candidates = document.querySelectorAll('div[contenteditable="true"]');
+      for (var i = 0; i < candidates.length; i++) {
+        var cn = candidates[i].className || '';
+        if (typeof cn === 'string' && cn.indexOf('cursor-text') !== -1) {
+          candidates[i].focus();
+          candidates[i].click();
+          candidates[i].innerText = '';
           return true;
         }
       }
       return false;
-    }, stopSelectors);
+    })()`);
+
+    if (!focused) {
+      this.log.warn('sendMessage: could not find Agent Chat input');
+      return false;
+    }
+
+    // Step 2: Type using Puppeteer keyboard (sends real CDP key events)
+    await this.page.keyboard.type(text, { delay: 10 });
+
+    // Step 3: Wait for Send button to become enabled, then click
+    await new Promise(r => setTimeout(r, 300));
+
+    const result = await this.page.evaluate(`(function() {
+      var buttons = document.querySelectorAll('button');
+      for (var j = 0; j < buttons.length; j++) {
+        var btnText = (buttons[j].textContent || '').trim();
+        if (btnText === 'Send' && !buttons[j].disabled) {
+          buttons[j].click();
+          return 'sent';
+        }
+      }
+      return 'no-send';
+    })()`);
+
+    this.log.info('sendMessage result: ' + result);
+
+    if (result === 'no-send') {
+      // Fallback: press Enter
+      await this.page.keyboard.press('Enter');
+      this.log.info('sendMessage: used Enter key fallback');
+    }
+
+    return true;
   }
 
-  /**
-   * Take a screenshot of the IDE.
-   */
+  async getLatestReply(): Promise<string> {
+    if (!this.page) throw new Error('CDP not connected');
+
+    const result = await this.page.evaluate(`(function() {
+      // Try known message selectors
+      var selectors = ['.message-content', '[data-testid="message"]', '.chat-message', '.response-content'];
+      for (var i = 0; i < selectors.length; i++) {
+        var messages = document.querySelectorAll(selectors[i]);
+        if (messages.length > 0) {
+          var last = messages[messages.length - 1];
+          return (last.textContent || '').trim() || 'Empty message';
+        }
+      }
+      return 'No messages found';
+    })()`);
+
+    return result as string;
+  }
+
+  async getMessageCount(): Promise<number> {
+    if (!this.page) throw new Error('CDP not connected');
+
+    const result = await this.page.evaluate(`(function() {
+      var selectors = ['.message-content', '[data-testid="message"]', '.chat-message', '.response-content'];
+      for (var i = 0; i < selectors.length; i++) {
+        var messages = document.querySelectorAll(selectors[i]);
+        if (messages.length > 0) return messages.length;
+      }
+      return 0;
+    })()`);
+
+    return result as number;
+  }
+
+  async stopGeneration(): Promise<boolean> {
+    if (!this.page) throw new Error('CDP not connected');
+
+    const result = await this.page.evaluate(`(function() {
+      var buttons = document.querySelectorAll('button');
+      for (var i = 0; i < buttons.length; i++) {
+        var text = (buttons[i].textContent || '').trim().toLowerCase();
+        var label = (buttons[i].getAttribute('aria-label') || '').toLowerCase();
+        if (text === 'stop' || label.indexOf('stop') !== -1 || label.indexOf('cancel') !== -1) {
+          buttons[i].click();
+          return true;
+        }
+      }
+      return false;
+    })()`);
+
+    return result as boolean;
+  }
+
   async screenshot(): Promise<Buffer> {
     if (!this.page) throw new Error('CDP not connected');
     const screenshot = await this.page.screenshot({
@@ -264,13 +261,10 @@ export class CDPClient {
     return Buffer.from(screenshot);
   }
 
-  /**
-   * Check if CDP is connected and responsive.
-   */
   async isConnected(): Promise<boolean> {
     try {
       if (!this.page) return false;
-      await this.page.evaluate(() => document.title);
+      await this.page.evaluate('document.title');
       return true;
     } catch {
       return false;
@@ -278,17 +272,58 @@ export class CDPClient {
   }
 
   /**
-   * Evaluate JavaScript on the main page.
+   * Synchronous check — returns true if page ref exists (no I/O).
    */
+  isConnectedSync(): boolean {
+    return this.page !== null && this.browser !== null;
+  }
+
+  /**
+   * Get the current Puppeteer Page (for screencast / CDPSession).
+   */
+  getPage(): PageType | null {
+    return this.page;
+  }
+
   async evaluate(script: string): Promise<any> {
     if (!this.page) throw new Error('CDP not connected');
     return await this.page.evaluate(script);
   }
 
   /**
-   * Evaluate JavaScript on all targets (main page + iframes).
-   * For Auto Accept injection into Agent Chat iframes.
+   * Evaluate script across ALL browser targets AND their sub-frames.
+   * VS Code webviews appear as child frames (name="active-frame") inside pages.
+   * Returns concatenated results from all contexts with content.
    */
+  async evaluateInFrames(script: string): Promise<string | null> {
+    if (!this.browser) return null;
+
+    try {
+      const pages = await this.browser.pages();
+      const results: string[] = [];
+
+      for (const page of pages) {
+        // Search both the page AND its child frames
+        const frames = page.frames();
+        for (const frame of frames) {
+          try {
+            const result = await frame.evaluate(script);
+            if (result && typeof result === 'string' && result.trim().length > 10) {
+              results.push(result.trim());
+            }
+          } catch {
+            // Frame may not be accessible
+          }
+        }
+      }
+
+      if (results.length === 0) return null;
+      return results.join('\n---BOUNDARY---\n');
+    } catch {
+      return null;
+    }
+  }
+
   async evaluateOnAllTargets(script: string): Promise<void> {
     if (!this.browser) throw new Error('CDP not connected');
 
@@ -302,9 +337,6 @@ export class CDPClient {
     }
   }
 
-  /**
-   * Disconnect from CDP.
-   */
   async disconnect(): Promise<void> {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

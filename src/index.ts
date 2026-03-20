@@ -6,8 +6,9 @@ import { AgentMonitor } from './cdp/monitor.js';
 import { AutoAcceptManager } from './cdp/auto-accept.js';
 import { CommandRouter } from './commands/router.js';
 import { registerCommands } from './commands/handlers.js';
-import { splitMessage } from './utils/helpers.js';
+import { splitMessage, htmlToMarkdown } from './utils/helpers.js';
 import { buildAgentReplyCard } from './feishu/card-builder.js';
+import { H5Server } from './h5/server.js';
 
 async function main() {
   // 1. Load config
@@ -56,9 +57,15 @@ async function main() {
     await router.dispatch(text, chatId, userId);
   });
 
-  // 7. Start Agent reply monitor — push Agent replies as rich cards
+  // 7. Start Agent reply monitor — push Agent replies as rich cards + H5
   const monitor = new AgentMonitor(cdp, log, async (reply: string) => {
     const chatId = bot.getLastChatId();
+
+    // Push to H5 dashboard
+    if (h5Server) {
+      h5Server.pushAgentOutput(reply);
+    }
+
     if (!chatId) return;
 
     try {
@@ -66,7 +73,8 @@ async function main() {
       await bot.sendCard(chatId, cardJson);
     } catch {
       // Fallback to plain text
-      const chunks = splitMessage(reply);
+      const plainText = htmlToMarkdown(reply);
+      const chunks = splitMessage(plainText);
       for (const chunk of chunks) {
         await bot.sendText(chatId, `🤖 Agent:\n\n${chunk}`);
       }
@@ -75,6 +83,39 @@ async function main() {
 
   if (config.monitor.enabled) {
     monitor.start(config.monitor.intervalMs);
+  }
+
+  // 7.5 Start H5 Dashboard
+  let h5Server: H5Server | null = null;
+  if (config.h5.enabled) {
+    h5Server = new H5Server(cdp, log, config.h5.port);
+
+    // Wire up H5 actions
+    h5Server.onAgentSend = async (text: string) => {
+      const connected = await cdp.isConnected();
+      if (!connected) return false;
+      return await cdp.sendMessage(text);
+    };
+
+    h5Server.onStop = async () => {
+      return await cdp.stopGeneration();
+    };
+
+    h5Server.onScreenshot = async () => {
+      return await cdp.screenshot();
+    };
+
+    h5Server.onAutoAcceptToggle = async (enable: boolean) => {
+      if (enable) {
+        await autoAccept.enable();
+      } else {
+        await autoAccept.disable();
+      }
+      h5Server!.setAutoAcceptStatus(autoAccept.enabled);
+    };
+
+    await h5Server.start();
+    h5Server.setFeishuStatus(true); // Feishu starts after this
   }
 
   // 8. Auto-enable Auto Accept if configured
@@ -97,12 +138,31 @@ async function main() {
   log.info(`   CDP: ${config.cdp.host}:${config.cdp.port}`);
   log.info(`   Monitor: ${config.monitor.enabled ? 'ON' : 'OFF'}`);
   log.info(`   Auto Accept: ${config.autoAccept.enabled ? 'ON' : 'OFF'}`);
+  log.info(`   H5 Dashboard: ${config.h5.enabled ? `http://localhost:${config.h5.port}` : 'OFF'}`);
 
   // Graceful shutdown
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     log.info('Shutting down...');
-    monitor.stop();
-    cdp.disconnect();
+
+    // Hard timeout: force exit after 5s no matter what
+    const forceTimer = setTimeout(() => {
+      log.warn('Shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 5000);
+
+    try {
+      monitor.stop();
+      if (h5Server) await h5Server.stop();
+      await cdp.disconnect();
+    } catch (err) {
+      log.error(`Shutdown error: ${err}`);
+    }
+
+    clearTimeout(forceTimer);
     process.exit(0);
   };
 

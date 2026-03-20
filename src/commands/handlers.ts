@@ -162,6 +162,26 @@ export function registerCommands(
     }
   });
 
+  // /window [target] — list or switch windows
+  router.register('window', 'List or switch IDE windows', async (ctx) => {
+    const target = ctx.args.join(' ').trim();
+
+    if (!target) {
+      // List all windows
+      const windows = await cdp.listWindows();
+      const lines = windows.map((title, i) => `\`[${i}]\` ${title}`);
+      await bot.sendText(ctx.chatId, `📋 IDE Windows:\n${lines.join('\n')}\n\nUse /window <number or keyword> to switch`);
+    } else {
+      // Switch to target
+      try {
+        const title = await cdp.switchPage(target);
+        await bot.sendText(ctx.chatId, `✅ Switched to: ${title}`);
+      } catch (err) {
+        await bot.sendText(ctx.chatId, `❌ ${err}`);
+      }
+    }
+  });
+
   // /help — rich card display
   router.register('help', 'Show available commands', async (ctx) => {
     const commands = router.getCommandList();
