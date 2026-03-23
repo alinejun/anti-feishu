@@ -11,11 +11,12 @@ const GET_REPLIES_SCRIPT = `
     var els = document.querySelectorAll('.animate-markdown');
     if (els.length === 0) return JSON.stringify({count: 0, messages: []});
     
+    var maxLen = 20000;
     var messages = [];
     for (var i = 0; i < els.length; i++) {
       var html = (els[i].innerHTML || '').trim();
       if (html.length > 0) {
-        messages.push(html.length > 5000 ? html.substring(0, 5000) + '...' : html);
+        messages.push(html.length > maxLen ? html.substring(0, maxLen) + '...' : html);
       }
     }
     

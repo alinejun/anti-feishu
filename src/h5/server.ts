@@ -325,10 +325,11 @@ export class H5Server {
                 var els = document.querySelectorAll('.animate-markdown');
                 if (els.length === 0) return JSON.stringify({count: 0, messages: []});
                 var messages = [];
+                var maxLen = 20000;
                 for (var i = 0; i < els.length; i++) {
                   var html = (els[i].innerHTML || '').trim();
                   if (html.length > 0) {
-                    messages.push(html.length > 5000 ? html.substring(0, 5000) + '...' : html);
+                    messages.push(html.length > maxLen ? html.substring(0, maxLen) + '...' : html);
                   }
                 }
                 return JSON.stringify({count: messages.length, messages: messages});

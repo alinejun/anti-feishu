@@ -158,6 +158,46 @@
   }
 
   // ===== Agent Output =====
+
+  /**
+   * Detect if message text looks like agent thinking/reasoning.
+   * Thinking content is usually: English-only, no rich formatting,
+   * and starts with reasoning patterns.
+   */
+  function isThinkingContent(html) {
+    // Strip HTML tags to get plain text
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const plain = (tmp.textContent || '').trim();
+
+    // Too short to be thinking
+    if (plain.length < 10) return false;
+
+    // If it contains complex HTML (lists, headers, code blocks), it's a real response
+    if (/<(h[1-6]|ul|ol|li|pre|code|table|blockquote)\b/i.test(html)) return false;
+
+    // Common thinking/reasoning patterns (English)
+    const thinkingPatterns = [
+      /^(I('ll| will| need| should| want| have| can| am| realize| think| believe|'ve|'m)\b)/i,
+      /^(Let me\b)/i,
+      /^(The user\b)/i,
+      /^(Now I\b)/i,
+      /^(Looking at\b)/i,
+      /^(Based on\b)/i,
+      /^(Since\b)/i,
+      /^(First,?\b)/i,
+      /^(This (is|means|looks|should|will|would|could)\b)/i,
+      /^(OK|Okay|Alright),?\s/i,
+      /^(Wait|Hmm|Actually),?\s/i,
+    ];
+
+    for (const pattern of thinkingPatterns) {
+      if (pattern.test(plain)) return true;
+    }
+
+    return false;
+  }
+
   function addAgentOutput(text, timestamp, type) {
     if (!text) return;
 
@@ -179,6 +219,22 @@
     if (type === 'event') {
       content.textContent = text;
       content.classList.add('text-blue');
+    } else if (isThinkingContent(text)) {
+      // Render thinking content as collapsible block
+      const details = document.createElement('details');
+      details.className = 'thinking-block';
+
+      const summary = document.createElement('summary');
+      summary.className = 'thinking-summary';
+      summary.innerHTML = '💭 <span class="thinking-label">Thinking</span>';
+
+      const body = document.createElement('div');
+      body.className = 'thinking-body';
+      body.innerHTML = text;
+
+      details.appendChild(summary);
+      details.appendChild(body);
+      content.appendChild(details);
     } else {
       // Render as HTML (Markdown from Agent)
       content.classList.add('markdown-body');
