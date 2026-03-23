@@ -36,6 +36,11 @@ export class AgentMonitor {
   private isChecking = false;
   private initialized = false;
 
+  // Debounce for streaming messages
+  private pendingReply: string | null = null;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceMs = 2000; // Wait 2s after last change before sending
+
   constructor(
     cdp: CDPClient,
     log: Logger,
@@ -68,19 +73,21 @@ export class AgentMonitor {
           return;
         }
 
-        // New message(s) appeared
+        // New message(s) appeared (count increased)
         if (data.count > this.lastMessageCount) {
+          // Flush any pending streaming reply first
+          this.flushPending();
+
           const newMsgs = data.messages.slice(this.lastMessageCount);
           for (const msg of newMsgs) {
             if (msg.length > 3) {
-              this.log.info(`Agent reply (${msg.length} chars)`);
-              this.onReply(msg);
+              // Debounce: the message might still be streaming
+              this.scheduleReply(msg);
             }
           }
         } else if (data.lastMsg !== this.lastMessageText && data.lastMsg.length > 3) {
-          // Content of last message changed (streaming)
-          this.log.info(`Agent reply updated (${data.lastMsg.length} chars)`);
-          this.onReply(data.lastMsg);
+          // Content of last message changed (streaming update)
+          this.scheduleReply(data.lastMsg);
         }
 
         this.lastMessageCount = data.count;
@@ -93,7 +100,35 @@ export class AgentMonitor {
     }, intervalMs);
   }
 
+  /**
+   * Schedule a reply with debouncing — waits for content to stabilize.
+   */
+  private scheduleReply(text: string): void {
+    this.pendingReply = text;
+
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    this.debounceTimer = setTimeout(() => {
+      this.flushPending();
+    }, this.debounceMs);
+  }
+
+  private flushPending(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.pendingReply) {
+      this.log.info(`Agent reply (${this.pendingReply.length} chars, debounced)`);
+      this.onReply(this.pendingReply);
+      this.pendingReply = null;
+    }
+  }
+
   stop(): void {
+    this.flushPending();
     if (this.polling) {
       clearInterval(this.polling);
       this.polling = null;

@@ -95,6 +95,7 @@
               <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
             </svg>
           </button>
+          <button id="btn-remote" class="toolbar-btn" title="Remote Control">🖱️</button>
         </div>
         <div class="toolbar-group toolbar-info">
           <label class="quality-label">
@@ -108,10 +109,80 @@
           <span id="fps-counter" class="fps-counter">0 FPS</span>
         </div>
       </div>
+
+      <!-- Quick Actions Bar -->
+      <div id="quick-actions" class="quick-actions">
+        <button class="action-btn action-stop" data-action="stop" title="Stop Generation">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          Stop
+        </button>
+        <button class="action-btn action-accept" data-action="accept" title="Accept Changes">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
+          Accept
+        </button>
+        <button class="action-btn action-reject" data-action="reject" title="Reject Changes">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          Reject
+        </button>
+        <button class="action-btn" data-action="save" title="Save File">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+          Save
+        </button>
+        <button class="action-btn" data-action="undo" title="Undo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"/></svg>
+          Undo
+        </button>
+        <button class="action-btn" data-action="redo" title="Redo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13"/></svg>
+          Redo
+        </button>
+        <button class="action-btn" data-action="toggle-terminal" title="Toggle Terminal">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-5-6-5M12 19h8"/></svg>
+          Term
+        </button>
+        <button class="action-btn" data-action="command-palette" title="Command Palette">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 3a3 3 0 00-3 3v12a3 3 0 003 3 3 3 0 003-3 3 3 0 00-3-3H6a3 3 0 00-3 3 3 3 0 003 3 3 3 0 003-3V6a3 3 0 00-3-3 3 3 0 00-3 3 3 3 0 003 3h12a3 3 0 003-3 3 3 0 00-3-3z"/></svg>
+          Cmd
+        </button>
+      </div>
     </section>
 
     <!-- Right Panel -->
     <section id="right-panel">
+      <!-- Management Panel -->
+      <div id="mgmt-panel" class="mgmt-panel">
+        <div class="mgmt-tabs">
+          <button class="mgmt-tab active" data-tab="sessions">💬 Sessions</button>
+          <button class="mgmt-tab" data-tab="workspace">📂 Files</button>
+          <button class="mgmt-tab" data-tab="projects">🏠 Projects</button>
+        </div>
+        <div class="mgmt-content" id="mgmt-sessions" style="display:block">
+          <div class="mgmt-toolbar">
+            <button id="btn-new-session" class="mgmt-btn primary">➕ New Session</button>
+            <button id="btn-refresh-sessions" class="mgmt-btn">🔄</button>
+          </div>
+          <div id="sessions-list" class="mgmt-list">
+            <div class="mgmt-empty">Loading...</div>
+          </div>
+        </div>
+        <div class="mgmt-content" id="mgmt-workspace" style="display:none">
+          <div class="mgmt-toolbar">
+            <button id="btn-refresh-files" class="mgmt-btn">🔄 Refresh</button>
+          </div>
+          <div id="files-list" class="mgmt-list">
+            <div class="mgmt-empty">Loading...</div>
+          </div>
+        </div>
+        <div class="mgmt-content" id="mgmt-projects" style="display:none">
+          <div class="mgmt-toolbar">
+            <button id="btn-refresh-projects" class="mgmt-btn">🔄 Refresh</button>
+          </div>
+          <div id="projects-list" class="mgmt-list">
+            <div class="mgmt-empty">Loading...</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Agent Output -->
       <div id="agent-section">
         <div class="panel-header">
@@ -125,12 +196,28 @@
               <rect x="4" y="4" width="16" height="16" rx="2"/>
             </svg>
           </button>
+          <button id="btn-image" class="btn-image" title="Upload Image">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <path d="M21 15l-5-5L5 21"/>
+            </svg>
+          </button>
+          <input type="file" id="image-input" accept="image/*" style="display:none"/>
           <input
             type="text"
             id="agent-input"
             placeholder="Send to Agent..."
             autocomplete="off"
           />
+          <button id="btn-voice" class="btn-voice" title="Voice Input">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+              <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>
           <button id="btn-send" class="btn-send" title="Send (Enter)">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>

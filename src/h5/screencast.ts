@@ -28,6 +28,8 @@ export class ScreencastManager {
   private config: ScreencastConfig;
   private log: Logger;
   private minFrameIntervalMs = 200; // Min 200ms between frames (~5 fps max)
+  private staleCheckInterval: NodeJS.Timeout | null = null;
+  private readonly STALE_TIMEOUT_MS = 10000; // 10s without frames = stale
 
   // Callback when a new frame arrives
   public onFrame: ((base64Data: string, metadata: FrameMetadata) => void) | null = null;
@@ -47,7 +49,11 @@ export class ScreencastManager {
     }
 
     try {
+      const pageTitle = await page.title().catch(() => 'unknown');
+      this.log.info(`Creating CDP session for page: "${pageTitle}"`);
+
       this.session = await page.createCDPSession();
+      this.log.info('CDP session created, setting up frame listener');
 
       // Listen for frames
       this.session.on('Page.screencastFrame', (params: any) => {
@@ -65,7 +71,18 @@ export class ScreencastManager {
 
       this.running = true;
       this.frameCount = 0;
+      this.lastFrameTime = Date.now();
       this.startFpsCounter();
+      this.startStaleCheck();
+
+      // Detect session disconnect
+      this.session.on('disconnected', () => {
+        this.log.warn('Screencast CDP session disconnected');
+        this.running = false;
+        this.stopFpsCounter();
+        this.stopStaleCheck();
+        this.session = null;
+      });
 
       this.log.info(
         `Screencast started (${this.config.maxWidth}x${this.config.maxHeight}, ` +
@@ -73,6 +90,7 @@ export class ScreencastManager {
       );
     } catch (err) {
       this.log.error(`Failed to start screencast: ${err}`);
+      this.running = false;
       throw err;
     }
   }
@@ -81,11 +99,10 @@ export class ScreencastManager {
    * Stop screencast.
    */
   async stop(): Promise<void> {
-    if (!this.running) return;
-
-    // Mark stopped first to prevent handleFrame from re-triggering
+    // Always clean up, even if running is already false (e.g. after stale timeout)
     this.running = false;
     this.stopFpsCounter();
+    this.stopStaleCheck();
 
     const session = this.session;
     this.session = null;
@@ -97,6 +114,7 @@ export class ScreencastManager {
 
       try {
         session.removeAllListeners('Page.screencastFrame');
+        session.removeAllListeners('disconnected');
         await withTimeout(session.send('Page.stopScreencast'), 3000);
       } catch { /* ignore */ }
 
@@ -191,6 +209,28 @@ export class ScreencastManager {
       this.fpsUpdateInterval = null;
     }
     this.fps = 0;
+  }
+
+  private startStaleCheck(): void {
+    this.stopStaleCheck();
+    this.staleCheckInterval = setInterval(() => {
+      if (this.running && this.lastFrameTime > 0) {
+        const elapsed = Date.now() - this.lastFrameTime;
+        if (elapsed > this.STALE_TIMEOUT_MS) {
+          this.log.warn(`Screencast stale (no frames for ${Math.round(elapsed / 1000)}s), marking stopped`);
+          this.running = false;
+          this.stopFpsCounter();
+          this.stopStaleCheck();
+        }
+      }
+    }, 5000);
+  }
+
+  private stopStaleCheck(): void {
+    if (this.staleCheckInterval) {
+      clearInterval(this.staleCheckInterval);
+      this.staleCheckInterval = null;
+    }
   }
 }
 

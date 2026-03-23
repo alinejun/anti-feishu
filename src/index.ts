@@ -138,7 +138,7 @@ async function main() {
   log.info(`   CDP: ${config.cdp.host}:${config.cdp.port}`);
   log.info(`   Monitor: ${config.monitor.enabled ? 'ON' : 'OFF'}`);
   log.info(`   Auto Accept: ${config.autoAccept.enabled ? 'ON' : 'OFF'}`);
-  log.info(`   H5 Dashboard: ${config.h5.enabled ? `http://localhost:${config.h5.port}` : 'OFF'}`);
+  log.info(`   H5 Dashboard: ${config.h5.enabled ? `http://localhost:${config.h5.port} | https://localhost:${config.h5.port + 1}` : 'OFF'}`);
 
   // Graceful shutdown
   let shuttingDown = false;

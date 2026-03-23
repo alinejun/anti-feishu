@@ -81,7 +81,6 @@ export class CDPClient {
     this.setupDisconnectHandler();
     this.log.info(`CDP connected. Active page: "${await this.page?.title()}"`);
   }
-
   /**
    * List all available windows.
    */
@@ -102,24 +101,281 @@ export class CDPClient {
     if (!this.browser) throw new Error('CDP not connected');
     const pages = await this.browser.pages();
 
-    // Try by index
     const idx = parseInt(target);
     if (!isNaN(idx) && idx >= 0 && idx < pages.length) {
       this.page = pages[idx];
       return await this.page.title();
     }
 
-    // Try by title keyword
     for (const p of pages) {
       const title = await p.title().catch(() => '');
       if (title.toLowerCase().includes(target.toLowerCase())) {
         this.page = p;
-        this.lastTargetTitle = target; // Remember for reconnect
+        this.lastTargetTitle = target;
         return title;
       }
     }
 
     throw new Error(`Window not found: ${target}`);
+  }
+
+  /**
+   * List Agent chat sessions (tabs in the agent panel).
+   */
+  async listAgentSessions(): Promise<{ index: number; title: string; active: boolean }[]> {
+    if (!this.page) return [];
+
+    const result = await this.page.evaluate(`(function() {
+      // Agent sessions are in .tab elements within panels
+      var tabs = document.querySelectorAll('.tab');
+      var sessions = [];
+      for (var i = 0; i < tabs.length; i++) {
+        var text = (tabs[i].textContent || '').trim();
+        var isActive = tabs[i].classList.contains('active');
+        // Filter: agent session tabs typically have conversation-like names
+        // Skip very short tabs (icons), non-text tabs, and known file extensions
+        if (text.length > 0 && text.length < 80 &&
+            !text.match(/\\.(ts|js|css|html|json|md|py|rs|go|toml|yaml|sh|cjs|mjs)$/i)) {
+          sessions.push({ index: i, title: text, active: isActive });
+        }
+      }
+      return JSON.stringify(sessions);
+    })()`);
+
+    try {
+      return JSON.parse(result as string);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Switch to an Agent session by tab index.
+   */
+  async switchAgentSession(tabIndex: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    return await this.page.evaluate(`(function() {
+      var tabs = document.querySelectorAll('.tab');
+      if (${tabIndex} < tabs.length) {
+        tabs[${tabIndex}].click();
+        return true;
+      }
+      return false;
+    })()`) as boolean;
+  }
+
+  /**
+   * Create a new Agent chat session (Cmd+L / Ctrl+L).
+   */
+  async newAgentSession(): Promise<boolean> {
+    if (!this.page) return false;
+
+    const isMac = process.platform === 'darwin';
+    await this.page.keyboard.down(isMac ? 'Meta' : 'Control');
+    await this.page.keyboard.press('l');
+    await this.page.keyboard.up(isMac ? 'Meta' : 'Control');
+
+    return true;
+  }
+
+  /**
+   * Close an Agent session tab by index.
+   */
+  async closeAgentSession(tabIndex: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    return await this.page.evaluate(`(function() {
+      var tabs = document.querySelectorAll('.tab');
+      if (${tabIndex} >= tabs.length) return false;
+      // Find close button within the tab
+      var closeBtn = tabs[${tabIndex}].querySelector('.tab-close, [class*="close"], .codicon-close');
+      if (closeBtn) {
+        closeBtn.click();
+        return true;
+      }
+      return false;
+    })()`) as boolean;
+  }
+
+  /**
+   * List open editor files (tabs).
+   */
+  async listOpenFiles(): Promise<{ index: number; title: string; active: boolean }[]> {
+    if (!this.page) return [];
+
+    const result = await this.page.evaluate(`(function() {
+      var containers = document.querySelectorAll('.tabs-container .tab, .editor-tabs .tab');
+      var files = [];
+      for (var i = 0; i < containers.length; i++) {
+        var text = (containers[i].textContent || '').trim();
+        var isActive = containers[i].classList.contains('active');
+        if (text.length > 0 && text.length < 100) {
+          files.push({ index: i, title: text, active: isActive });
+        }
+      }
+      // Fallback: if no tabs-container found, try all .tab with file extensions
+      if (files.length === 0) {
+        var allTabs = document.querySelectorAll('.tab');
+        for (var j = 0; j < allTabs.length; j++) {
+          var t = (allTabs[j].textContent || '').trim();
+          var active = allTabs[j].classList.contains('active');
+          if (t.length > 0 && t.length < 100 &&
+              t.match(/\\.(ts|js|css|html|json|md|py|rs|go|toml|yaml|sh|cjs|mjs|vue|tsx|jsx)$/i)) {
+            files.push({ index: j, title: t, active: active });
+          }
+        }
+      }
+      return JSON.stringify(files);
+    })()`);
+
+    try {
+      return JSON.parse(result as string);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Switch to an open file tab by index.
+   */
+  async switchFile(tabIndex: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    return await this.page.evaluate(`(function() {
+      var tabs = document.querySelectorAll('.tabs-container .tab, .editor-tabs .tab');
+      if (tabs.length === 0) tabs = document.querySelectorAll('.tab');
+      if (${tabIndex} < tabs.length) {
+        tabs[${tabIndex}].click();
+        return true;
+      }
+      return false;
+    })()`) as boolean;
+  }
+
+  /**
+   * Close a file tab by index.
+   */
+  async closeFile(tabIndex: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    // First switch to the tab, then use Cmd+W
+    await this.switchFile(tabIndex);
+    await new Promise(r => setTimeout(r, 200));
+
+    const isMac = process.platform === 'darwin';
+    await this.page.keyboard.down(isMac ? 'Meta' : 'Control');
+    await this.page.keyboard.press('w');
+    await this.page.keyboard.up(isMac ? 'Meta' : 'Control');
+
+    return true;
+  }
+
+  /**
+   * List currently open workspaces (CDP targets / Cursor windows).
+   */
+  async listWorkspaces(): Promise<{ index: number; title: string; active: boolean }[]> {
+    if (!this.browser) return [];
+    const pages = await this.browser.pages();
+    const currentTitle = this.page ? await this.page.title().catch(() => '') : '';
+    const results: { index: number; title: string; active: boolean }[] = [];
+
+    for (let i = 0; i < pages.length; i++) {
+      const title = await pages[i].title().catch(() => 'N/A');
+      results.push({
+        index: i,
+        title,
+        active: title === currentTitle,
+      });
+    }
+    return results;
+  }
+
+  /**
+   * Switch to a workspace by index.
+   */
+  async switchWorkspace(index: number): Promise<string> {
+    if (!this.browser) throw new Error('CDP not connected');
+    const pages = await this.browser.pages();
+
+    if (index < 0 || index >= pages.length) {
+      throw new Error(`Workspace index out of range: ${index}`);
+    }
+
+    this.page = pages[index];
+    // Bring the window to front so screencast can capture it
+    await this.page.bringToFront().catch(() => {});
+    await new Promise(r => setTimeout(r, 500));
+    const title = await this.page.title().catch(() => 'Unknown');
+    this.lastTargetTitle = title;
+    return title;
+  }
+
+  /**
+   * Get the IDE viewport size for coordinate mapping.
+   */
+  async getViewportSize(): Promise<{ width: number; height: number }> {
+    if (!this.page) return { width: 1920, height: 1080 };
+
+    const size = await this.page.evaluate(`(function() {
+      return JSON.stringify({ width: window.innerWidth, height: window.innerHeight });
+    })()`);
+
+    try {
+      return JSON.parse(size as string);
+    } catch {
+      return { width: 1920, height: 1080 };
+    }
+  }
+
+  /**
+   * Dispatch mouse event to the IDE page.
+   */
+  async dispatchMouseEvent(
+    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved',
+    x: number,
+    y: number,
+    _button?: 'left' | 'right' | 'middle',
+  ): Promise<void> {
+    if (!this.page) return;
+
+    const px = Math.round(x);
+    const py = Math.round(y);
+
+    if (type === 'mousePressed') {
+      await this.page.mouse.move(px, py);
+      await this.page.mouse.down();
+    } else if (type === 'mouseReleased') {
+      await this.page.mouse.move(px, py);
+      await this.page.mouse.up();
+    } else if (type === 'mouseMoved') {
+      await this.page.mouse.move(px, py);
+    }
+  }
+
+  /**
+   * Perform a click at coordinates.
+   */
+  async clickAt(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.click(x, y);
+  }
+
+  /**
+   * Perform a drag from one point to another.
+   */
+  async drag(fromX: number, fromY: number, toX: number, toY: number): Promise<void> {
+    if (!this.page) return;
+    await this.page.mouse.move(fromX, fromY);
+    await this.page.mouse.down();
+    // Move in steps for smooth dragging
+    const steps = 10;
+    for (let i = 1; i <= steps; i++) {
+      const x = fromX + (toX - fromX) * (i / steps);
+      const y = fromY + (toY - fromY) * (i / steps);
+      await this.page.mouse.move(x, y);
+    }
+    await this.page.mouse.up();
   }
 
   async connectWithRetry(): Promise<void> {
@@ -200,34 +456,48 @@ export class CDPClient {
   }
 
   async getLatestReply(): Promise<string> {
-    if (!this.page) throw new Error('CDP not connected');
+    if (!this.browser) throw new Error('CDP not connected');
 
-    const result = await this.page.evaluate(`(function() {
-      // Try known message selectors
-      var selectors = ['.message-content', '[data-testid="message"]', '.chat-message', '.response-content'];
-      for (var i = 0; i < selectors.length; i++) {
-        var messages = document.querySelectorAll(selectors[i]);
-        if (messages.length > 0) {
-          var last = messages[messages.length - 1];
-          return (last.textContent || '').trim() || 'Empty message';
+    const pages = await this.browser.pages();
+
+    for (const p of pages) {
+      try {
+        const title = await Promise.race([
+          p.title(),
+          new Promise<string>(r => setTimeout(() => r(''), 1000)),
+        ]);
+        if (title.includes('Dashboard') || title === 'Launchpad') continue;
+
+        const result = await Promise.race([
+          p.evaluate(`(function() {
+            try {
+              var els = document.querySelectorAll('.animate-markdown');
+              if (els.length === 0) return '';
+              var last = els[els.length - 1];
+              var html = (last.innerHTML || '').trim();
+              return html || '';
+            } catch(e) { return ''; }
+          })()`),
+          new Promise<string>(r => setTimeout(() => r(''), 2000)),
+        ]);
+
+        if (result && typeof result === 'string' && result.length > 3) {
+          return result;
         }
+      } catch {
+        // skip inaccessible pages
       }
-      return 'No messages found';
-    })()`);
+    }
 
-    return result as string;
+    return 'No messages found';
   }
 
   async getMessageCount(): Promise<number> {
     if (!this.page) throw new Error('CDP not connected');
 
     const result = await this.page.evaluate(`(function() {
-      var selectors = ['.message-content', '[data-testid="message"]', '.chat-message', '.response-content'];
-      for (var i = 0; i < selectors.length; i++) {
-        var messages = document.querySelectorAll(selectors[i]);
-        if (messages.length > 0) return messages.length;
-      }
-      return 0;
+      var els = document.querySelectorAll('.animate-markdown');
+      return els.length;
     })()`);
 
     return result as number;
@@ -236,20 +506,177 @@ export class CDPClient {
   async stopGeneration(): Promise<boolean> {
     if (!this.page) throw new Error('CDP not connected');
 
+    // Strategy 1 (most reliable): Press Escape — universally stops generation
+    this.log.info('stopGeneration: pressing Escape');
+    await this.page.keyboard.press('Escape');
+
+    // Also try clicking a stop button if one exists (belt-and-suspenders)
     const result = await this.page.evaluate(`(function() {
+      // Try specific stop button selectors
+      var selectors = [
+        '[data-testid="stop-button"]',
+        'button[aria-label="Stop"]',
+        'button[aria-label="stop"]',
+        'button[title="Stop generating"]',
+        'button[title="Stop"]',
+        'button[aria-label="Stop generation"]',
+        'button[aria-label="Stop Generation"]',
+      ];
+      for (var s = 0; s < selectors.length; s++) {
+        var el = document.querySelector(selectors[s]);
+        if (el) { el.click(); return 'selector:' + selectors[s]; }
+      }
+
+      // Try stop icon classes (VS Code / Cursor)
+      var iconClasses = ['codicon-debug-stop', 'codicon-stop-circle', 'codicon-stop'];
+      for (var ic = 0; ic < iconClasses.length; ic++) {
+        var icons = document.querySelectorAll('.' + iconClasses[ic]);
+        for (var j = 0; j < icons.length; j++) {
+          var btn = icons[j].closest('button');
+          if (btn) { btn.click(); return 'icon:' + iconClasses[ic]; }
+        }
+      }
+
+      // Narrow text search: only match "stop" (not "cancel" which hits unrelated dialogs)
       var buttons = document.querySelectorAll('button');
       for (var i = 0; i < buttons.length; i++) {
         var text = (buttons[i].textContent || '').trim().toLowerCase();
         var label = (buttons[i].getAttribute('aria-label') || '').toLowerCase();
-        if (text === 'stop' || label.indexOf('stop') !== -1 || label.indexOf('cancel') !== -1) {
+        var title = (buttons[i].getAttribute('title') || '').toLowerCase();
+        var all = text + ' ' + label + ' ' + title;
+        if (all.indexOf('stop') !== -1 || all.indexOf('interrupt') !== -1) {
           buttons[i].click();
-          return true;
+          return 'text:' + text + '|label:' + label;
         }
       }
+
       return false;
     })()`);
 
-    return result as boolean;
+    if (result && result !== false) {
+      this.log.info('stopGeneration: also clicked via ' + result);
+    }
+
+    return true;
+  }
+
+  /**
+   * Execute a common IDE action via keyboard shortcut.
+   * Used by H5 quick action buttons to bypass imprecise screencast clicks.
+   */
+  async executeAction(action: string): Promise<{ success: boolean; message: string }> {
+    if (!this.page) return { success: false, message: 'CDP not connected' };
+
+    const isMac = process.platform === 'darwin';
+    const mod = isMac ? 'Meta' : 'Control';
+
+    try {
+      switch (action) {
+        case 'stop':
+          await this.stopGeneration();
+          return { success: true, message: 'Generation stopped' };
+
+        case 'accept':
+          // Accept current suggestion (Cmd/Ctrl+Y or click Accept in Antigravity)
+          await this.page.evaluate(`(function() {
+            // Try to find and click Accept/Apply buttons
+            var btns = document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+              var text = (btns[i].textContent || '').trim().toLowerCase();
+              if ((text === 'accept' || text === 'apply' || text === 'accept all'
+                  || text.indexOf('accept') === 0)
+                  && btns[i].offsetParent !== null && !btns[i].disabled) {
+                btns[i].click();
+                return 'clicked:' + text;
+              }
+            }
+            return false;
+          })()`);
+          return { success: true, message: 'Accept triggered' };
+
+        case 'reject':
+          // Reject current suggestion
+          await this.page.evaluate(`(function() {
+            var btns = document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+              var text = (btns[i].textContent || '').trim().toLowerCase();
+              if ((text === 'reject' || text === 'reject all' || text === 'dismiss'
+                  || text.indexOf('reject') === 0)
+                  && btns[i].offsetParent !== null && !btns[i].disabled) {
+                btns[i].click();
+                return 'clicked:' + text;
+              }
+            }
+            return false;
+          })()`);
+          return { success: true, message: 'Reject triggered' };
+
+        case 'new-chat':
+          // New Agent session (Cmd/Ctrl + L)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.press('l');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'New chat created' };
+
+        case 'save':
+          // Save file (Cmd/Ctrl + S)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.press('s');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'File saved' };
+
+        case 'undo':
+          // Undo (Cmd/Ctrl + Z)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.press('z');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'Undo triggered' };
+
+        case 'redo':
+          // Redo (Cmd/Ctrl + Shift + Z)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.down('Shift');
+          await this.page.keyboard.press('z');
+          await this.page.keyboard.up('Shift');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'Redo triggered' };
+
+        case 'toggle-terminal':
+          // Toggle terminal (Ctrl + `)
+          await this.page.keyboard.down('Control');
+          await this.page.keyboard.press('`');
+          await this.page.keyboard.up('Control');
+          return { success: true, message: 'Terminal toggled' };
+
+        case 'toggle-sidebar':
+          // Toggle sidebar (Cmd/Ctrl + B)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.press('b');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'Sidebar toggled' };
+
+        case 'command-palette':
+          // Command palette (Cmd/Ctrl + Shift + P)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.down('Shift');
+          await this.page.keyboard.press('p');
+          await this.page.keyboard.up('Shift');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'Command palette opened' };
+
+        case 'focus-agent':
+          // Focus Agent chat (Cmd/Ctrl + L)
+          await this.page.keyboard.down(mod);
+          await this.page.keyboard.press('l');
+          await this.page.keyboard.up(mod);
+          return { success: true, message: 'Agent focused' };
+
+        default:
+          return { success: false, message: `Unknown action: ${action}` };
+      }
+    } catch (err) {
+      return { success: false, message: `Action failed: ${err}` };
+    }
   }
 
   async screenshot(): Promise<Buffer> {
